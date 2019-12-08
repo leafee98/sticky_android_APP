@@ -10,6 +10,7 @@ import android.app.AlertDialog;
 import android.content.DialogInterface;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.content.res.Configuration;
 import android.os.Bundle;
 import android.util.Log;
 import android.view.Menu;
@@ -26,20 +27,19 @@ import com.example.sticky.R;
 import com.example.sticky.client.Client;
 import bistu.share.Overview;
 
-import java.io.IOException;
 import java.net.InetAddress;
 import java.net.UnknownHostException;
 import java.util.List;
 
 public class OverviewActivity extends AppCompatActivity {
 
-    private Client client;
-
     private Button addSticky;
     private RecyclerView recycler;
     private ProgressBar progress;
     private StickyOverviewAdapter adapter;
+
     private boolean startup = true;
+    private boolean clickable = true;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -71,9 +71,15 @@ public class OverviewActivity extends AppCompatActivity {
 
     @Override
     public boolean onOptionsItemSelected(@NonNull MenuItem item) {
-        switch (item.getItemId()) {
-            case R.id.refresh_list: this.refreshOverviewList(); break;
-            case R.id.connect_configuration: this.showConfigureServerDialog(); break;
+        if (clickable) {
+            switch (item.getItemId()) {
+                case R.id.refresh_list:
+                    this.refreshOverviewList();
+                    break;
+                case R.id.connect_configuration:
+                    this.showConfigureServerDialog();
+                    break;
+            }
         }
         return true;
     }
@@ -92,26 +98,40 @@ public class OverviewActivity extends AppCompatActivity {
 
     @Override
     protected void onDestroy() {
+        new Thread(() -> Client.getInstance().shutdown()).start();
         super.onDestroy();
-        this.client.shutdown();
     }
+
+    @Override
+    public void onConfigurationChanged(@NonNull Configuration newConfig) { }
 
     /**
      * start DetailActivity to view sticky's detail.
      * @param id the id of sticky to view.
      */
     void viewDetail(long id) {
-        Intent instant = new Intent(this, DetailActivity.class);
-        instant.putExtra("id", id);
-        startActivity(instant);
+        if (clickable) {
+            Intent instant = new Intent(this, DetailActivity.class);
+            instant.putExtra("id", id);
+            startActivity(instant);
+        }
     }
 
     private void assignAction() {
         this.addSticky.setOnClickListener((View v) ->
             new Thread(() -> {
-                this.runOnUiThread(() -> this.showProgress(true));
-                long id = this.client.addSticky();
-                this.runOnUiThread(() -> { this.showProgress(false); this.viewDetail(id); });
+                if (clickable) {
+                    this.runOnUiThread(() -> this.showProgress(true));
+                    long id = Client.getInstance().addSticky();
+                    if (id > 0)
+                        this.runOnUiThread(() -> {
+                            this.showProgress(false);
+                            this.viewDetail(id);
+                        });
+                    else
+                        Toast.makeText(this, "unknown error occurred while adding sticky",
+                                Toast.LENGTH_SHORT).show();
+                }
             }).start()
         );
     }
@@ -130,35 +150,37 @@ public class OverviewActivity extends AppCompatActivity {
             try {
                 Log.i("initClient()", String.format("Address: %s", address));
                 int index = address.indexOf(':');
+                if (index < 0)
+                    throw new NumberFormatException();
                 String hostAddress = address.substring(0, index);
                 int port = Integer.parseInt(address.substring(index + 1));
 
-                this.client = new Client(InetAddress.getByName(hostAddress), port);
+                if(Client.init(InetAddress.getByName(hostAddress), port)) {
+                    Log.i("initClient()", "connected to server.");
 
-                Log.i("initClient()", "connected to server.");
+                    // save address connected.
+                    SharedPreferences.Editor editor = this.getSharedPreferences("serverAddress", MODE_PRIVATE).edit();
+                    editor.putString("address", address);
+                    editor.apply();
 
-                // save address connected.
-                SharedPreferences.Editor editor = this.getSharedPreferences("serverAddress", MODE_PRIVATE).edit();
-                editor.putString("address", address);
-                editor.apply();
-
-                this.runOnUiThread(() -> {
-                    Toast.makeText(this, "connected to server.", Toast.LENGTH_SHORT).show();
-                    this.refreshOverviewList();
-                });
+                    this.runOnUiThread(() -> {
+                        Toast.makeText(this, "connected to server.", Toast.LENGTH_SHORT).show();
+                        this.refreshOverviewList();
+                    });
+                } else {
+                    this.runOnUiThread(() -> {
+                        Toast.makeText(this, "fail to connect to server due to unknown error.", Toast.LENGTH_SHORT).show();
+                        this.showConfigureServerDialog();
+                    });
+                }
             } catch (NumberFormatException e) {
                 this.runOnUiThread(() -> {
-                    Toast.makeText(this, "server address format error!", Toast.LENGTH_LONG).show();
+                    Toast.makeText(this, "server address format error!", Toast.LENGTH_SHORT).show();
                     this.showConfigureServerDialog();
                 });
             } catch (UnknownHostException e) {
                 this.runOnUiThread(() -> {
-                    Toast.makeText(this, "unable to resolve address!", Toast.LENGTH_LONG).show();
-                    this.showConfigureServerDialog();
-                });
-            } catch (IOException e) {
-                this.runOnUiThread(() -> {
-                    Toast.makeText(this, "fail to connect to server!", Toast.LENGTH_LONG).show();
+                    Toast.makeText(this, "unable to resolve address!", Toast.LENGTH_SHORT).show();
                     this.showConfigureServerDialog();
                 });
             }
@@ -170,20 +192,31 @@ public class OverviewActivity extends AppCompatActivity {
     private void showProgress(boolean show) {
         if (show) {
             this.progress.setVisibility(View.VISIBLE);
+            this.clickable = false;
+            Log.i("progressBar", "show progress bar.");
         } else {
-            this.progress.setVisibility(View.GONE);
+            this.progress.setVisibility(View.INVISIBLE);
+            this.clickable = true;
+            Log.i("progressBar", "hide progress bar.");
         }
     }
 
     private void refreshOverviewList() {
         this.showProgress(true);
         new Thread(() -> {
-            List<Overview> overviews = client.getList();
-            this.adapter = new StickyOverviewAdapter(this, overviews);
-            this.runOnUiThread(() -> {
-                this.recycler.setAdapter(adapter);
-                this.showProgress(false);
-            });
+            List<Overview> overviews = Client.getInstance().getList();
+            if (overviews != null) {
+                this.adapter = new StickyOverviewAdapter(this, overviews);
+                this.runOnUiThread(() -> {
+                    this.recycler.setAdapter(adapter);
+                    this.showProgress(false);
+                });
+            } else {
+                this.runOnUiThread(() -> {
+                    Toast.makeText(this, "disconnected from server due to network error.", Toast.LENGTH_SHORT).show();
+                    this.showProgress(false);
+                });
+            }
         }).start();
     }
 
@@ -201,7 +234,7 @@ public class OverviewActivity extends AppCompatActivity {
         builder.setTitle(R.string.dialog_title_connect_to);
         builder.setPositiveButton("OK", (DialogInterface dia, int which) ->
                this.initClient(serverAddress.getText().toString()));
-        builder.setNegativeButton("Cancel", null);
+        builder.setCancelable(false);
         builder.show();
     }
 

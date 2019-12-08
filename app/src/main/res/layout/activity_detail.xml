@@ -19,9 +19,10 @@
         android:id="@+id/editText_sticky_detail_content"
         android:layout_width="0dp"
         android:layout_height="0dp"
-        android:layout_marginTop="4dp"
+        android:layout_marginTop="10dp"
         android:layout_marginStart="4dp"
         android:layout_marginEnd="4dp"
+        android:padding="4dp"
         android:textSize="16sp"
         android:textColor="@color/colorStickyContent"
         android:background="@drawable/background_sticky"
@@ -65,8 +66,10 @@
     <ProgressBar
         android:id="@+id/progressBar_saving_detail"
         style="?android:attr/progressBarStyleHorizontal"
+        android:indeterminate="true"
+        android:visibility="invisible"
         android:layout_width="0dp"
-        android:layout_height="4dp"
+        android:layout_height="10dp"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintTop_toBottomOf="@+id/toolbar_detail" />

@@ -5,6 +5,7 @@ import androidx.appcompat.app.AppCompatActivity;
 import androidx.appcompat.widget.Toolbar;
 
 import android.content.Intent;
+import android.content.res.Configuration;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Message;
@@ -28,9 +29,9 @@ public class DetailActivity extends AppCompatActivity {
 
     private Handler handler;
     private Thread stickyUpdater;
+    private boolean clickable = true;
 
     private Detail detail;
-    private Client client;
 
     private EditText stickyContent;
     private TextView stickyModify;
@@ -60,9 +61,13 @@ public class DetailActivity extends AppCompatActivity {
 
     @Override
     public boolean onOptionsItemSelected(@NonNull MenuItem item) {
-        this.removeSticky(detail.getId());
+        if(clickable)
+            this.removeSticky(detail.getId());
         return true;
     }
+
+    @Override
+    public void onConfigurationChanged(@NonNull Configuration newConfig) { }
 
     /**
      * set content with data come from @param d.
@@ -79,8 +84,10 @@ public class DetailActivity extends AppCompatActivity {
     void showProgressLoading(boolean show) {
         if (show) {
             this.progressLoading.setVisibility(View.VISIBLE);
+            this.clickable = false;
         } else {
             this.progressLoading.setVisibility(View.GONE);
+            this.clickable = true;
         }
     }
 
@@ -121,11 +128,12 @@ public class DetailActivity extends AppCompatActivity {
                         this.detail.setModifyTime(new Timestamp(d.getTime()));
                         Log.i(DetailActivity.class.getName(), String.format("Detail: %s", this.detail.toString()));
 
-                        if (client.updateSticky(this.detail))
+                        if (Client.getInstance().updateSticky(this.detail))
                             Log.i(DetailActivity.class.getName(), "updated Detail.");
                         else
                             runOnUiThread(() ->
-                                    Toast.makeText(this, "fail to update sticky", Toast.LENGTH_SHORT).show());
+                                    Toast.makeText(this, "fail to update sticky. (auto update every 3 sec)",
+                                            Toast.LENGTH_SHORT).show());
 
 
                         msg3.what = HandlerDetailActivity.UPDATE_MODIFY;
@@ -137,12 +145,22 @@ public class DetailActivity extends AppCompatActivity {
             } catch (InterruptedException e) {
                 Log.w(DetailActivity.class.getName(), "updater interrupted.");
 
-                Log.i(DetailActivity.class.getName(), "updating Detail.");
-                Date d = new Date();
-                this.detail.setFullText(this.stickyContent.getText().toString());
-                this.detail.setModifyTime(new Timestamp(d.getTime()));
-                client.updateSticky(this.detail);
-                Log.i(DetailActivity.class.getName(), "updated Detail.");
+                String newContent = this.stickyContent.getText().toString();
+                if (!newContent.equals(this.detail.getFullText())) {
+                    Log.i(DetailActivity.class.getName(), "updating Detail.");
+                    Date d = new Date();
+                    this.detail.setFullText(newContent);
+                    this.detail.setModifyTime(new Timestamp(d.getTime()));
+
+                    if (Client.getInstance().updateSticky(this.detail))
+                        Log.i(DetailActivity.class.getName(), "updated Detail.");
+                    else
+                        runOnUiThread(() ->
+                                Toast.makeText(this, "fail to update sticky on activity finish.",
+                                        Toast.LENGTH_SHORT).show());
+
+                    Log.i(DetailActivity.class.getName(), "updated Detail.");
+                }
             }
         });
         this.stickyUpdater.start();
@@ -157,14 +175,18 @@ public class DetailActivity extends AppCompatActivity {
         this.showProgressLoading(true);
         Log.i(DetailActivity.class.getName(), String.format("requiring Detail, id=%d", id));
         new Thread(() -> {
-            Detail d = this.client.getDetail(id);
+            Detail d = Client.getInstance().getDetail(id);
+            if (d != null) {
+                Message msg1 = new Message();
+                msg1.what = HandlerDetailActivity.ASSIGN_DETAIL;
+                msg1.obj = d;
+                handler.sendMessage(msg1);
+            } else {
+                Toast.makeText(this, "fail to get detail of sticky.", Toast.LENGTH_SHORT).show();
+            }
 
-            Message msg1 = new Message();
             Message msg2 = new Message();
-            msg1.what = HandlerDetailActivity.ASSIGN_DETAIL;
-            msg1.obj = d;
             msg2.what = HandlerDetailActivity.HIDE_PROGRESS_BAR;
-            handler.sendMessage(msg1);
             handler.sendMessage(msg2);
         }).start();
     }
@@ -175,7 +197,6 @@ public class DetailActivity extends AppCompatActivity {
      */
     private long getVariable() {
         Intent intent = getIntent();
-        this.client = Client.getInstance();
         return intent.getLongExtra("id", -1);
     }
 
@@ -194,7 +215,9 @@ public class DetailActivity extends AppCompatActivity {
     private void removeSticky(long id) {
         this.showProgressLoading(true);
         new Thread(() -> {
-            client.removeStick(id);
+            if (!Client.getInstance().removeStick(id))
+                Toast.makeText(this, "fail to remove sticky due to network error.",
+                        Toast.LENGTH_SHORT).show();
 
             Message msg1 = new Message();
             Message msg2 = new Message();
